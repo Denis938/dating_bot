@@ -1,110 +1,97 @@
 version: '3.8'
 
-# Development configuration with additional tools
-
 services:
-  # ====================
-  # PostgreSQL Database
-  # ====================
+  # PostgreSQL
   db:
     image: postgres:15-alpine
-    container_name: dating_bot_db_dev
+    container_name: dating_bot_db
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-dating_bot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dating_bot_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-dating_bot}
+      POSTGRES_USER: dating_bot
+      POSTGRES_PASSWORD: dating_bot_secret
+      POSTGRES_DB: dating_bot
     volumes:
-      - postgres_dev_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     networks:
-      - dating_bot_network_dev
+      - dating_bot_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dating_bot}"]
+      test: ["CMD-SHELL", "pg_isready -U dating_bot"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ====================
-  # Redis Cache
-  # ====================
+  # Redis
   redis:
     image: redis:7-alpine
-    container_name: dating_bot_redis_dev
+    container_name: dating_bot_redis
     command: redis-server --appendonly yes
     volumes:
-      - redis_dev_data:/data
+      - redis_data:/data
     ports:
       - "6379:6379"
     networks:
-      - dating_bot_network_dev
+      - dating_bot_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ====================
-  # MinIO (S3-compatible storage)
-  # ====================
+  # MinIO (S3)
   minio:
     image: minio/minio:latest
-    container_name: dating_bot_minio_dev
+    container_name: dating_bot_minio
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     volumes:
-      - minio_dev_data:/data
+      - minio_data:/data
     ports:
       - "9000:9000"
       - "9001:9001"
     networks:
-      - dating_bot_network_dev
+      - dating_bot_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
 
-  # ====================
-  # Create MinIO Bucket
-  # ====================
+  # Create bucket
   createbuckets:
     image: minio/mc:latest
-    container_name: dating_bot_minio_init_dev
+    container_name: dating_bot_minio_init
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
       sleep 5;
-      /usr/bin/mc alias set myminio http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin};
-      /usr/bin/mc mb --ignore-existing myminio/${S3_BUCKET:-dating-bot};
-      /usr/bin/mc policy set public myminio/${S3_BUCKET:-dating-bot};
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb --ignore-existing myminio/dating-bot;
+      /usr/bin/mc policy set public myminio/dating-bot;
       exit 0;
       "
     networks:
-      - dating_bot_network_dev
+      - dating_bot_network
 
-  # ====================
-  # Backend API (FastAPI)
-  # ====================
+  # Backend
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile.dev
-    container_name: dating_bot_backend_dev
+      dockerfile: Dockerfile
+    container_name: dating_bot_backend
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-dating_bot}:${POSTGRES_PASSWORD:-dating_bot_secret}@db:5432/${POSTGRES_DB:-dating_bot}
+      DATABASE_URL: postgresql://dating_bot:dating_bot_secret@db:5432/dating_bot
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: minio:9000
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      S3_BUCKET: ${S3_BUCKET:-dating-bot}
-      JWT_SECRET: ${JWT_SECRET:-dev_secret_change_in_production}
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: dating-bot
+      JWT_SECRET: dev_secret_change_in_production
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      DEBUG: "True"
     volumes:
       - ./backend:/app
     ports:
@@ -117,48 +104,14 @@ services:
       minio:
         condition: service_healthy
     networks:
-      - dating_bot_network_dev
+      - dating_bot_network
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 
-  # ====================
-  # pgAdmin (Database UI)
-  # ====================
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: dating_bot_pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    ports:
-      - "8080:80"
-    depends_on:
-      - db
-    networks:
-      - dating_bot_network_dev
-
-  # ====================
-  # Redis Commander (Redis UI)
-  # ====================
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: dating_bot_redis_commander
-    environment:
-      REDIS_HOSTS: local:redis:6379
-    ports:
-      - "8081:8081"
-    depends_on:
-      - redis
-    networks:
-      - dating_bot_network_dev
-
 networks:
-  dating_bot_network_dev:
+  dating_bot_network:
     driver: bridge
 
 volumes:
-  postgres_dev_data:
-  redis_dev_data:
-  minio_dev_data:
-  pgadmin_data:
+  postgres_data:
+  redis_data:
+  minio_data:
