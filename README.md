@@ -1,91 +1,66 @@
-# Dating Bot 💕
+# Dating Bot
 
 Telegram дейтинг-бот с подбором пар.
 
-## Стек
+## Документация
 
-- **Backend:** Python + FastAPI
-- **Database:** PostgreSQL
-- **Cache:** Redis
-- **Storage:** S3 (MinIO)
-- **Bot:** aiogram 3.x
+Вся документация находится в папке **DOCS/**
 
-## Структура
+### 📁 Структура документации
 
 ```
-dating-bot/
-├── backend/
-│   ├── src/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   └── modules/
-│   │       ├── auth/
-│   │       ├── profile/
-│   │       ├── matching/
-│   │       ├── chat/
-│   │       └── media/
-│   ├── db/migrations/
-│   ├── tests/
-│   ├── requirements.txt
-│   └── Dockerfile
-├── bot/
-│   └── main.py
-├── docs/
-├── docker-compose.yml
-└── README.md
+DOCS/
+├── README.md          # Полное описание архитектуры (Этап 1)
+└── image-1.png        # Схема базы данных
 ```
+
+## Этапы разработки
+
+### ✅ Этап 1: Планирование и проектирование
+
+- [x] Описание сервисов
+- [x] Архитектурная схема
+- [x] Схема данных (PostgreSQL + SurrealDB)
+
+**Подробности:** [DOCS/README.md](./DOCS/README.md)
+
+### ⏳ Этап 2: Реализация
+
+- [ ] Bot Service (aiogram 3.x)
+- [ ] Profile Service (FastAPI)
+- [ ] Matching Service (FastAPI)
+- [ ] Celery Workers
+- [ ] Admin Service
+
+### ⏳ Этап 3: Инфраструктура
+
+- [ ] Docker Compose
+- [ ] CI/CD (GitHub Actions)
+- [ ] Prometheus + Grafana
+
+## Стек технологий
+
+| Технология | Назначение |
+|------------|------------|
+| Python, aiogram 3.x | Bot Service |
+| Python, FastAPI | REST API сервисы |
+| PostgreSQL | Основная БД |
+| SurrealDB | Граф взаимодействий |
+| Redis | Кэш, rate-limit |
+| Celery + RabbitMQ | Фоновые задачи |
+| MinIO (S3) | Хранение фото |
 
 ## Быстрый старт
 
-1. Клонировать репо:
 ```bash
-git clone <your-repo-url>
+# Клонировать репозиторий
+git clone <repo-url>
 cd dating-bot
+
+# Запустить (после реализации)
+docker-compose up -d
 ```
 
-2. Настроить окружение:
-```bash
-cp backend/.env.example backend/.env
-# Отредактировать TELEGRAM_BOT_TOKEN
-```
+## Лицензия
 
-3. Запустить:
-```bash
-docker-compose -f docker-compose.dev.yml up
-```
-
-4. Открыть API docs: http://localhost:8000/docs
-
-## Документация
-
-- [Описание сервисов](./docs/services.md)
-- [Архитектура](./docs/architecture.md)
-- [Схема БД](./docs/db_schema.md)
-
-## API Endpoints
-
-**Auth:**
-- POST /auth/register
-- POST /auth/login
-
-**Profile:**
-- GET /profile/me
-- PUT /profile/me
-
-**Matching:**
-- GET /matching/recommendations
-- POST /matching/like
-- GET /matching/matches
-
-**Chat:**
-- GET /chat/:match_id/messages
-- POST /chat/:match_id/messages
-
-## Коммиты
-
-```bash
-git add .
-git commit -m "feat: описание изменений"
-git push
-```
+MIT
