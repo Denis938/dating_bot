@@ -32,7 +32,7 @@ flowchart TB
     end
 
     subgraph Storage["Storage"]
-        S3[S3 Bucket<br/>Photos]
+        S3[S3 Bucket Photos]
     end
 
     TG <--> API
