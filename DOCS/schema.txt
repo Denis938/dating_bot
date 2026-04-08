@@ -1,0 +1,170 @@
+PostgreSQL Database Schema - Dating Bot
+=========================================
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              DATABASE SCHEMA                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                                    users                                         │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │ id              BIGSERIAL PRIMARY KEY                                      │  │
+│  │ telegram_id     BIGINT UNIQUE NOT NULL          ─────────────────────┐     │  │
+│  │ username        VARCHAR(255)                                       │     │  │
+│  │ first_name      VARCHAR(255)                                       │     │  │
+│  │ last_name       VARCHAR(255)                                       │     │  │
+│  │ language_code   VARCHAR(10)                                        │     │  │
+│  │ is_banned       BOOLEAN DEFAULT FALSE                              │     │  │
+│  │ last_active_at  TIMESTAMPTZ                                        │     │  │
+│  │ created_at      TIMESTAMPTZ                                        │     │  │
+│  └────────────────────────────────────────────────────────────────────┼─────┘  │
+│         │           │                    │                    │            │     │
+│         │ 1:1       │ 1:1                │ 1:N                │ 1:N        │ 1:N │
+│         ▼           ▼                    ▼                    ▼            ▼     │
+│  ┌─────────────┐ ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────┐│
+│  │  profiles   │ │ preferences │  │   photos    │  │   matches   │  │ referrals││
+│  └─────────────┘ └─────────────┘  └─────────────┘  └─────────────┘  └──────────┘│
+│                                                                              │  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  profiles                                         │  preferences                │
+│  ┌────────────────────────────────────────────┐   │  ┌────────────────────────┐ │
+│  │ id              BIGSERIAL PRIMARY KEY      │   │  │ user_id  BIGINT PK    │ │
+│  │ user_id         BIGINT UNIQUE FK           │   │  │ preferred_gender       │ │
+│  │ name            VARCHAR(100)               │   │  │ age_min    INTEGER     │ │
+│  │ age             INTEGER CHECK >= 18        │   │  │ age_max    INTEGER     │ │
+│  │ gender          VARCHAR(20)                │   │  │ preferred_city         │ │
+│  │ city            VARCHAR(100)               │   │  └────────────────────────┘ │
+│  │ description     TEXT                       │   │                            │
+│  │ interests       TEXT[]                     │   └────────────────────────────┘
+│  │ completeness    DECIMAL(3,2)               │
+│  │ photo_count     INTEGER                    │   ┌────────────────────────────┐
+│  │ moderation_status VARCHAR(20)              │   │  photos                    │
+│  │ updated_at      TIMESTAMPTZ                │   │  ┌────────────────────────┐ │
+│  └────────────────────────────────────────────┘   │  │ id         BIGSERIAL   │ │
+│                                                   │  │ user_id    BIGINT FK   │ │
+│  INDEX: idx_profiles_gender_age                   │  │ s3_key     VARCHAR(500)│ │
+│                                                   │  │ is_primary BOOLEAN     │ │
+│                                                   │  │ status     VARCHAR(20) │ │
+│                                                   │  │ created_at TIMESTAMPTZ │ │
+│                                                   │  └────────────────────────┘ │
+│                                                   │  INDEX: idx_photos_user     │
+│                                                   └────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  matches                                          │  ratings                    │
+│  ┌────────────────────────────────────────────┐   │  ┌────────────────────────┐ │
+│  │ id           BIGSERIAL PRIMARY KEY         │   │  │ user_id  BIGINT PK    │ │
+│  │ user1_id     BIGINT FK                     │   │  │ primary_score         │ │
+│  │ user2_id     BIGINT FK                     │   │  │ secondary_score       │ │
+│  │ created_at   TIMESTAMPTZ                   │   │  │ tertiary_score        │ │
+│  │ is_active    BOOLEAN                       │   │  │ combined_score        │ │
+│  └────────────────────────────────────────────┘   │  │ updated_at TIMESTAMPTZ│ │
+│  UNIQUE (user1_id, user2_id)                      │  └────────────────────────┘ │
+│  CHECK (user1_id < user2_id)                      └────────────────────────────┘
+│  INDEX: idx_matches_user1, idx_matches_user2
+│
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  referrals                                        │  moderation_log             │
+│  ┌────────────────────────────────────────────┐   │  ┌────────────────────────┐ │
+│  │ id           BIGSERIAL PRIMARY KEY         │   │  │ id         BIGSERIAL   │ │
+│  │ referrer_id  BIGINT FK                     │   │  │ entity_type VARCHAR(20)│ │
+│  │ referred_id  BIGINT UNIQUE FK              │   │  │ entity_id   BIGINT     │ │
+│  │ referred_at  TIMESTAMPTZ                   │   │  │ status      VARCHAR(20)│ │
+│  └────────────────────────────────────────────┘   │  │ reason      TEXT       │ │
+│                                                   │  │ checked_at  TIMESTAMPTZ│ │
+│                                                   │  └────────────────────────┘ │
+│                                                   └────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                           RELATIONSHIPS SUMMARY                                  │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  users ──(1:1)── profiles                                                        │
+│    │                                                                             │
+│    ├──(1:1)── preferences                                                        │
+│    │                                                                             │
+│    ├──(1:N)── photos                                                             │
+│    │                                                                             │
+│    ├──(1:N)── matches (as user1)                                                 │
+│    │                                                                             │
+│    ├──(1:N)── matches (as user2)                                                 │
+│    │                                                                             │
+│    ├──(1:N)── referrals (as referrer)                                            │
+│    │                                                                             │
+│    └──(1:N)── referrals (as referred)                                            │
+│                                                                                  │
+│  matches ──(implicit)── dialog_events (SurrealDB)                                │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                           SURREALDB GRAPH SCHEMA                                 │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  NODES:                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  user:{telegram_id}                                                        │  │
+│  │    - telegram_id: BIGINT                                                   │  │
+│  │    - username: STRING                                                      │  │
+│  │    - rating: FLOAT                                                         │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  EDGES:                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  liked                                                                     │  │
+│  │    - out: user:{telegram_id}  (who liked)                                  │  │
+│  │    - in:  user:{telegram_id}  (who was liked)                              │  │
+│  │    - timestamp: DATETIME                                                   │  │
+│  │    - is_superlike: BOOLEAN                                                 │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  skipped                                                                   │  │
+│  │    - out: user:{telegram_id}                                               │  │
+│  │    - in:  user:{telegram_id}                                               │  │
+│  │    - timestamp: DATETIME                                                   │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  viewed                                                                    │  │
+│  │    - out: user:{telegram_id}                                               │  │
+│  │    - in:  user:{telegram_id}                                               │  │
+│  │    - timestamp: DATETIME                                                   │  │
+│  │    - duration: INT (seconds viewed)                                        │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  matched                                                                   │  │
+│  │    - out: user:{telegram_id}                                               │  │
+│  │    - in:  user:{telegram_id}                                               │  │
+│  │    - timestamp: DATETIME                                                   │  │
+│  │    - is_active: BOOLEAN                                                    │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │  dialog_events                                                             │  │
+│  │    - out: match:{id}                                                       │  │
+│  │    - in:  user:{telegram_id}  (who wrote first)                            │  │
+│  │    - timestamp: DATETIME                                                   │  │
+│  │    - message_count: INT                                                    │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                  │
+│  EXAMPLE QUERIES:                                                                │
+│  ───────────────────────────────────────────────────────────────────────────     │
+│  -- Кого лайкнул пользователь:                                                   │
+│  SELECT ->liked->user FROM user:123                                              │
+│                                                                                  │
+│  -- Взаимный лайк (мэтч):                                                        │
+│  SELECT * FROM liked WHERE in=user:456 AND out=user:123                          │
+│                                                                                  │
+│  -- Исключить просмотренных:                                                     │
+│  SELECT ->viewed->user, ->liked->user, ->skipped->user FROM user:123             │
+│                                                                                  │
+│  -- Найти все мэтчи пользователя:                                                │
+│  SELECT ->matched->user FROM user:123 WHERE is_active = true                     │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
