@@ -2,3 +2,5 @@ aiogram==3.4.1
 sqlalchemy[asyncio]==2.0.25
 asyncpg==0.29.0
 python-dotenv==1.0.0
+redis[hiredis]==5.0.8
+aio-pika==9.4.3

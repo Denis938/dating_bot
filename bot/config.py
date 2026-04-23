@@ -10,6 +10,8 @@ class Config:
     db_user: str
     db_password: str
     db_name: str
+    redis_url: str
+    rabbitmq_url: str
 
     @property
     def database_url(self) -> str:
@@ -24,4 +26,6 @@ def load_config() -> Config:
         db_user=os.environ.get("DB_USER", "postgres"),
         db_password=os.environ.get("DB_PASSWORD", "postgres"),
         db_name=os.environ.get("DB_NAME", "dating_bot"),
+        redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+        rabbitmq_url=os.environ.get("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
     )

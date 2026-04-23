@@ -13,7 +13,15 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 def profile_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Редактировать", callback_data="edit_profile")],
+        [InlineKeyboardButton(text="🗑 Удалить анкету", callback_data="delete_profile")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")],
+    ])
+
+
+def delete_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="my_profile")],
     ])
 
 
@@ -53,6 +61,15 @@ def view_profile_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="👎 Пропустить", callback_data="skip"),
         ],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="main_menu")],
+    ])
+
+
+def search_settings_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚧ Пол", callback_data="edit_search_gender")],
+        [InlineKeyboardButton(text="🎂 Возраст", callback_data="edit_search_age")],
+        [InlineKeyboardButton(text="🏙 Город", callback_data="edit_search_city")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")],
     ])
 
 
