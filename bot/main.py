@@ -10,6 +10,8 @@ from handlers import router, setup_services
 from redis_cache import ProfileCache
 from mq import EventPublisher, EventConsumer
 from ranking import recalculate_rating
+from s3_service import S3Service
+from metrics import start_metrics_server
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +30,18 @@ async def main():
     db = Database(config.database_url)
     await db.create_tables()
     logger.info("Database tables created")
+
+    start_metrics_server(8000)
+    logger.info("Metrics server started on port 8000")
+
+    s3 = S3Service(
+        config.s3_endpoint,
+        config.s3_access_key,
+        config.s3_secret_key,
+        config.s3_bucket
+    )
+    await s3.init_bucket()
+    logger.info("S3 initialized")
 
     try:
         profile_cache = ProfileCache(config.redis_url)
@@ -54,7 +68,7 @@ async def main():
                 event_publisher = EventPublisher()
                 event_consumer = EventConsumer()
 
-    setup_services(profile_cache, event_publisher)
+    setup_services(profile_cache, event_publisher, s3)
 
     async def on_mq_message(message):
         async with message.process():

@@ -1,5 +1,7 @@
+import json
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InputMediaPhoto
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -13,8 +15,11 @@ from keyboards import (
     search_gender_kb
 )
 from ranking import recalculate_rating
+from profile_helpers import calculate_completeness, parse_photo_keys
 from redis_cache import ProfileCache
 from mq import EventPublisher
+from s3_service import S3Service
+from metrics import REGISTRATIONS, LIKES, MATCHES
 
 import logging
 logger = logging.getLogger(__name__)
@@ -23,14 +28,69 @@ router = Router()
 
 cache: ProfileCache | None = None
 publisher: EventPublisher | None = None
+s3: S3Service | None = None
 
 PROFILE_BATCH_SIZE = 10
 
 
-def setup_services(profile_cache: ProfileCache, event_publisher: EventPublisher):
-    global cache, publisher
+def _caption_for_photo(text: str) -> str:
+    if len(text) <= 1024:
+        return text
+    return text[:1020] + "…"
+
+
+async def _safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None):
+    chat_id = callback.message.chat.id
+    if callback.message.photo:
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.warning("Could not delete photo message: %s", e)
+        await callback.bot.send_message(chat_id, text, reply_markup=reply_markup)
+    else:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+
+
+async def _show_photo_or_text(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup,
+    photo_keys: list[str] | None,
+):
+    keys = [k for k in (photo_keys or []) if k]
+    if s3 and keys:
+        try:
+            img = await s3.download_photo(keys[-1])
+            photo_file = BufferedInputFile(img, filename="profile.jpg")
+            cap = _caption_for_photo(text)
+            if callback.message.photo:
+                await callback.message.edit_media(
+                    InputMediaPhoto(media=photo_file, caption=cap),
+                    reply_markup=reply_markup,
+                )
+            else:
+                await callback.bot.send_photo(
+                    chat_id=callback.message.chat.id,
+                    photo=photo_file,
+                    caption=cap,
+                    reply_markup=reply_markup,
+                )
+                try:
+                    await callback.message.delete()
+                except Exception as e:
+                    logger.warning("Could not delete text card: %s", e)
+        except Exception as e:
+            logger.exception("Photo card failed, falling back to text: %s", e)
+            await _safe_edit_text(callback, text, reply_markup)
+    else:
+        await _safe_edit_text(callback, text, reply_markup)
+
+
+def setup_services(profile_cache: ProfileCache, event_publisher: EventPublisher, s3_service: S3Service):
+    global cache, publisher, s3
     cache = profile_cache
     publisher = event_publisher
+    s3 = s3_service
 
 
 class ProfileForm(StatesGroup):
@@ -40,6 +100,7 @@ class ProfileForm(StatesGroup):
     city = State()
     description = State()
     interests = State()
+    photo = State()
 
 
 class PreferenceForm(StatesGroup):
@@ -69,14 +130,9 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
         session.add(rating)
 
         await session.commit()
+        REGISTRATIONS.inc()
 
     return user
-
-
-def calculate_completeness(profile: Profile) -> float:
-    fields = [profile.name, profile.age, profile.gender, profile.city, profile.description, profile.interests]
-    filled = sum(1 for f in fields if f)
-    return filled / len(fields)
 
 
 @router.message(CommandStart())
@@ -98,7 +154,7 @@ async def cmd_start(message: Message, session: AsyncSession):
 
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
+    await _safe_edit_text(callback,
         "📱 Главное меню\n\nВыбери действие:",
         reply_markup=main_menu_kb()
     )
@@ -127,13 +183,14 @@ async def show_profile(callback: CallbackQuery, session: AsyncSession):
     else:
         text = "Анкета не найдена. Начни с /start"
 
-    await callback.message.edit_text(text, reply_markup=profile_menu_kb())
+    keys = parse_photo_keys(profile.photo_keys) if profile else []
+    await _show_photo_or_text(callback, text, profile_menu_kb(), keys)
     await callback.answer()
 
 
 @router.callback_query(F.data == "edit_profile")
 async def edit_profile_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
+    await _safe_edit_text(callback,
         "✏️ Что хочешь изменить?",
         reply_markup=edit_profile_kb()
     )
@@ -143,7 +200,7 @@ async def edit_profile_menu(callback: CallbackQuery):
 @router.callback_query(F.data == "edit_name")
 async def edit_name(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileForm.name)
-    await callback.message.edit_text("Введи своё имя:", reply_markup=back_kb())
+    await _safe_edit_text(callback,"Введи своё имя:", reply_markup=back_kb())
     await callback.answer()
 
 
@@ -167,7 +224,7 @@ async def process_name(message: Message, state: FSMContext, session: AsyncSessio
 @router.callback_query(F.data == "edit_age")
 async def edit_age(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileForm.age)
-    await callback.message.edit_text("Введи свой возраст (18-100):", reply_markup=back_kb())
+    await _safe_edit_text(callback,"Введи свой возраст (18-100):", reply_markup=back_kb())
     await callback.answer()
 
 
@@ -197,7 +254,7 @@ async def process_age(message: Message, state: FSMContext, session: AsyncSession
 
 @router.callback_query(F.data == "edit_gender")
 async def edit_gender(callback: CallbackQuery):
-    await callback.message.edit_text("Выбери свой пол:", reply_markup=gender_kb())
+    await _safe_edit_text(callback,"Выбери свой пол:", reply_markup=gender_kb())
     await callback.answer()
 
 
@@ -216,14 +273,14 @@ async def process_gender(callback: CallbackQuery, session: AsyncSession):
         await session.commit()
         await _on_profile_updated(session, profile.user_id)
 
-    await callback.message.edit_text("✅ Пол сохранён!", reply_markup=main_menu_kb())
+    await _safe_edit_text(callback,"✅ Пол сохранён!", reply_markup=main_menu_kb())
     await callback.answer()
 
 
 @router.callback_query(F.data == "edit_city")
 async def edit_city(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileForm.city)
-    await callback.message.edit_text("Введи свой город:", reply_markup=back_kb())
+    await _safe_edit_text(callback,"Введи свой город:", reply_markup=back_kb())
     await callback.answer()
 
 
@@ -247,7 +304,7 @@ async def process_city(message: Message, state: FSMContext, session: AsyncSessio
 @router.callback_query(F.data == "edit_description")
 async def edit_description(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileForm.description)
-    await callback.message.edit_text("Расскажи о себе:", reply_markup=back_kb())
+    await _safe_edit_text(callback,"Расскажи о себе:", reply_markup=back_kb())
     await callback.answer()
 
 
@@ -271,7 +328,7 @@ async def process_description(message: Message, state: FSMContext, session: Asyn
 @router.callback_query(F.data == "edit_interests")
 async def edit_interests(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileForm.interests)
-    await callback.message.edit_text("Укажи свои интересы (через запятую):", reply_markup=back_kb())
+    await _safe_edit_text(callback,"Укажи свои интересы (через запятую):", reply_markup=back_kb())
     await callback.answer()
 
 
@@ -292,6 +349,39 @@ async def process_interests(message: Message, state: FSMContext, session: AsyncS
     await message.answer("✅ Интересы сохранены!", reply_markup=main_menu_kb())
 
 
+@router.callback_query(F.data == "edit_photo")
+async def edit_photo(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(ProfileForm.photo)
+    await _safe_edit_text(callback,"Пришли своё фото:", reply_markup=back_kb())
+    await callback.answer()
+
+
+@router.message(ProfileForm.photo, F.photo)
+async def process_photo(message: Message, state: FSMContext, session: AsyncSession, bot):
+    result = await session.execute(
+        select(Profile).join(User).where(User.telegram_id == message.from_user.id)
+    )
+    profile = result.scalar_one_or_none()
+
+    if profile and s3:
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        file_bytes = await bot.download_file(file.file_path)
+        
+        photo_key = await s3.upload_photo(profile.user_id, file_bytes.read(), f"{photo.file_id}.jpg")
+
+        keys = parse_photo_keys(profile.photo_keys)
+        keys.append(photo_key)
+        profile.photo_keys = json.dumps(keys)
+        profile.photo_count = len(keys)
+        profile.completeness = calculate_completeness(profile)
+        await session.commit()
+        await _on_profile_updated(session, profile.user_id)
+
+    await state.clear()
+    await message.answer("✅ Фото сохранено!", reply_markup=main_menu_kb())
+
+
 @router.callback_query(F.data == "search_settings")
 async def search_settings(callback: CallbackQuery, session: AsyncSession):
     result = await session.execute(
@@ -310,7 +400,7 @@ async def search_settings(callback: CallbackQuery, session: AsyncSession):
     else:
         text = "Настройки не найдены"
 
-    await callback.message.edit_text(text, reply_markup=search_settings_kb())
+    await _safe_edit_text(callback,text, reply_markup=search_settings_kb())
     await callback.answer()
 
 
@@ -360,6 +450,7 @@ async def _load_profiles_to_cache(session: AsyncSession, current_user: User, pre
                 "city": p.city,
                 "description": p.description,
                 "interests": p.interests,
+                "photo_keys": parse_photo_keys(p.photo_keys),
             })
         await cache.load_profiles(current_user.id, profiles_data)
 
@@ -385,7 +476,7 @@ async def view_profiles(callback: CallbackQuery, session: AsyncSession, state: F
     current_user = user_result.scalar_one_or_none()
 
     if not current_user:
-        await callback.message.edit_text("Сначала зарегистрируйся с /start")
+        await _safe_edit_text(callback,"Сначала зарегистрируйся с /start")
         await callback.answer()
         return
 
@@ -443,6 +534,7 @@ async def view_profiles(callback: CallbackQuery, session: AsyncSession, state: F
                 "city": profile.city,
                 "description": profile.description,
                 "interests": profile.interests,
+                "photo_keys": parse_photo_keys(profile.photo_keys),
             }
 
     if profile_data:
@@ -457,9 +549,14 @@ async def view_profiles(callback: CallbackQuery, session: AsyncSession, state: F
         await session.commit()
 
         text = _format_profile_text(profile_data)
-        await callback.message.edit_text(text, reply_markup=view_profile_kb())
+        await _show_photo_or_text(
+            callback,
+            text,
+            view_profile_kb(),
+            profile_data.get("photo_keys"),
+        )
     else:
-        await callback.message.edit_text(
+        await _safe_edit_text(callback,
             "😔 Пока нет подходящих анкет.\n\nПопробуй изменить настройки поиска или зайди позже!",
             reply_markup=back_kb()
         )
@@ -487,6 +584,7 @@ async def like_profile(callback: CallbackQuery, session: AsyncSession, state: FS
         action="like"
     )
     session.add(like_interaction)
+    LIKES.inc()
 
     mutual_result = await session.execute(
         select(Interaction).where(
@@ -501,8 +599,17 @@ async def like_profile(callback: CallbackQuery, session: AsyncSession, state: FS
         user1_id = min(current_user.id, viewing_user_id)
         user2_id = max(current_user.id, viewing_user_id)
 
-        match = Match(user1_id=user1_id, user2_id=user2_id)
-        session.add(match)
+        existing_match = await session.execute(
+            select(Match).where(
+                Match.user1_id == user1_id,
+                Match.user2_id == user2_id,
+                Match.is_active == True,
+            )
+        )
+        if existing_match.scalar_one_or_none() is None:
+            session.add(Match(user1_id=user1_id, user2_id=user2_id))
+            MATCHES.inc()
+
         await session.commit()
 
         await recalculate_rating(session, current_user.id)
@@ -516,7 +623,7 @@ async def like_profile(callback: CallbackQuery, session: AsyncSession, state: FS
         )
         other_profile = other_result.scalar_one_or_none()
 
-        await callback.message.edit_text(
+        await _safe_edit_text(callback,
             f"🎉 У вас взаимная симпатия с {other_profile.name if other_profile else 'пользователем'}!\n\n"
             "Можете начать общение!",
             reply_markup=main_menu_kb()
@@ -596,13 +703,13 @@ async def show_matches(callback: CallbackQuery, session: AsyncSession):
     else:
         text = "💔 Пока нет мэтчей.\n\nПродолжай смотреть анкеты!"
 
-    await callback.message.edit_text(text, reply_markup=back_kb())
+    await _safe_edit_text(callback,text, reply_markup=back_kb())
     await callback.answer()
 
 
 @router.callback_query(F.data == "delete_profile")
 async def confirm_delete(callback: CallbackQuery):
-    await callback.message.edit_text(
+    await _safe_edit_text(callback,
         "⚠️ Ты уверен, что хочешь удалить свою анкету?\n\nЭто действие нельзя отменить.",
         reply_markup=delete_confirm_kb()
     )
@@ -638,7 +745,7 @@ async def delete_profile(callback: CallbackQuery, session: AsyncSession):
     if cache:
         await cache.invalidate_all()
 
-    await callback.message.edit_text(
+    await _safe_edit_text(callback,
         "🗑 Анкета удалена.\n\nМожешь заполнить новую!",
         reply_markup=main_menu_kb()
     )
@@ -647,7 +754,7 @@ async def delete_profile(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data == "edit_search")
 async def edit_search_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
+    await _safe_edit_text(callback,
         "⚙️ Что изменить в настройках поиска?",
         reply_markup=search_settings_kb()
     )
@@ -656,7 +763,7 @@ async def edit_search_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "edit_search_gender")
 async def edit_search_gender(callback: CallbackQuery):
-    await callback.message.edit_text("Кого ищешь?", reply_markup=search_gender_kb())
+    await _safe_edit_text(callback,"Кого ищешь?", reply_markup=search_gender_kb())
     await callback.answer()
 
 
@@ -683,14 +790,14 @@ async def process_search_gender(callback: CallbackQuery, session: AsyncSession):
     if cache:
         await cache.invalidate(user.id)
 
-    await callback.message.edit_text("✅ Настройки поиска обновлены!", reply_markup=main_menu_kb())
+    await _safe_edit_text(callback,"✅ Настройки поиска обновлены!", reply_markup=main_menu_kb())
     await callback.answer()
 
 
 @router.callback_query(F.data == "edit_search_age")
 async def edit_search_age(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PreferenceForm.min_age)
-    await callback.message.edit_text(
+    await _safe_edit_text(callback,
         "Введи минимальный возраст (18-100):",
         reply_markup=back_kb()
     )
@@ -750,7 +857,7 @@ async def process_max_age(message: Message, state: FSMContext, session: AsyncSes
 @router.callback_query(F.data == "edit_search_city")
 async def edit_search_city(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PreferenceForm.city)
-    await callback.message.edit_text("Введи город для поиска (или 'любой'):", reply_markup=back_kb())
+    await _safe_edit_text(callback,"Введи город для поиска (или 'любой'):", reply_markup=back_kb())
     await callback.answer()
 
 

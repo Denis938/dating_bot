@@ -4,3 +4,8 @@ asyncpg==0.29.0
 python-dotenv==1.0.0
 redis[hiredis]==5.0.8
 aio-pika==9.4.3
+celery==5.3.6
+aioboto3==12.3.0
+prometheus_client==0.19.0
+psycopg2-binary==2.9.9
+pytest>=8.3.0,<9

@@ -12,10 +12,18 @@ class Config:
     db_name: str
     redis_url: str
     rabbitmq_url: str
+    s3_endpoint: str
+    s3_access_key: str
+    s3_secret_key: str
+    s3_bucket: str
 
     @property
     def database_url(self) -> str:
         return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+
+    @property
+    def sync_database_url(self) -> str:
+        return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
 
 
 def load_config() -> Config:
@@ -28,4 +36,8 @@ def load_config() -> Config:
         db_name=os.environ.get("DB_NAME", "dating_bot"),
         redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
         rabbitmq_url=os.environ.get("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+        s3_endpoint=os.environ.get("S3_ENDPOINT", "http://localhost:9000"),
+        s3_access_key=os.environ.get("S3_ACCESS_KEY", "minioadmin"),
+        s3_secret_key=os.environ.get("S3_SECRET_KEY", "minioadmin"),
+        s3_bucket=os.environ.get("S3_BUCKET", "profiles"),
     )

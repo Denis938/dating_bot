@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, BigInteger, String, Boolean, Integer, Float, DateTime, Text, Enum as SQLEnum, ForeignKey
+from sqlalchemy import Column, BigInteger, String, Boolean, Integer, Float, DateTime, Text, Enum as SQLEnum, ForeignKey, Index, text
 from sqlalchemy.sql import func
 import enum
 
@@ -43,6 +43,7 @@ class Profile(Base):
     description = Column(Text, nullable=True)
     interests = Column(Text, nullable=True)
     photo_count = Column(Integer, default=0)
+    photo_keys = Column(Text, nullable=True)
     completeness = Column(Float, default=0.0)
     moderation_status = Column(SQLEnum(ModerationStatus), default=ModerationStatus.PENDING)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -79,6 +80,8 @@ class Interaction(Base):
     action = Column(String(20), nullable=False)  # 'like', 'skip', 'view'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = (Index("ix_interactions_to_user_action", "to_user_id", "action"),)
+
 
 class Rating(Base):
     __tablename__ = "ratings"
@@ -90,6 +93,8 @@ class Rating(Base):
     combined_score = Column(Float, default=0.0)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    __table_args__ = (Index("ix_ratings_combined_score", "combined_score"),)
+
 
 class Database:
     def __init__(self, database_url: str):
@@ -99,6 +104,9 @@ class Database:
     async def create_tables(self):
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(
+                text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS photo_keys TEXT")
+            )
 
     async def get_session(self) -> AsyncSession:
         async with self.session_factory() as session:
